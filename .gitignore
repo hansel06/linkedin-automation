@@ -1,0 +1,31 @@
+# Binaries and build artifacts
+/bin/
+/build/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Go module/vendor
+/vendor/
+
+# IDE/editor
+.vscode/
+.idea/
+*.iml
+
+# Environment and local data
+.env
+.env.local
+*.db
+*.sqlite
+*.log
+/.DS_Store
+Thumbs.db
+
+# Rod downloads/cache (if used)
+/rod/
+
