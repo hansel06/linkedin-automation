@@ -1,0 +1,55 @@
+# LinkedIn Automation Configuration Example
+# Copy this file to config.yaml and customize as needed.
+# All settings are optional - sensible defaults will be used if not specified.
+#
+# Priority order:
+# 1. Default values (hardcoded)
+# 2. This YAML file (if exists)
+# 3. Environment variables (highest precedence)
+
+# Browser settings
+browser:
+  headless: true                    # Run browser in headless mode (hidden)
+  browser_timeout: 30s              # Page load timeout
+  viewport_width: 1920              # Browser window width (800-3840)
+  viewport_height: 1080             # Browser window height (600-2160)
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+# Stealth/anti-detection settings
+stealth:
+  min_delay: 2s                     # Minimum delay between actions
+  max_delay: 5s                     # Maximum delay between actions
+  scroll_speed_min: 100             # Minimum scroll pixels per step
+  scroll_speed_max: 300             # Maximum scroll pixels per step
+  typing_speed_min: 50ms            # Minimum time between keystrokes
+  typing_speed_max: 150ms           # Maximum time between keystrokes
+  mouse_movement_speed: 0.8         # Base speed multiplier for mouse movement
+
+# Rate limiting settings
+limits:
+  daily_connect_limit: 50           # Maximum connection requests per day
+  hourly_connect_limit: 10          # Maximum connection requests per hour
+  message_cooldown: 30s             # Delay between sending messages
+  connect_cooldown: 10s             # Delay between connection requests
+
+# Activity scheduling settings
+schedule:
+  business_hours_start: "09:00"     # Start of business hours (HH:MM format)
+  business_hours_end: "17:00"       # End of business hours (HH:MM format)
+  timezone: "America/New_York"      # Timezone for business hours (IANA timezone name)
+
+# Storage settings
+storage:
+  database_path: "data/automation.db"  # Path to SQLite database file
+  cookie_path: "data/cookies.json"     # Path to save browser cookies
+
+# Logging settings
+logging:
+  log_level: "info"                 # Log level: debug, info, warn, error
+  log_format: "console"            # Output format: json or console
+
+# Search settings
+search:
+  max_search_pages: 10              # Maximum pagination depth for searches
+  results_per_page: 10              # Expected results per page
+
