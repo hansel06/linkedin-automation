@@ -348,17 +348,501 @@ This document tracks the implementation phases, challenges faced, and solutions 
 
 ---
 
+## Phase 5: Models and Storage Contracts ✅
+
+**Status**: Complete
+
+**Objectives**:
+- Define data models for all entities (Profile, ConnectionRequest, Message, DailyCounters, HourlyCounters, SessionState)
+- Define storage repository interface with all CRUD operations
+- Design SQLite schema with tables, indexes, and relationships
+- Provide helper constructors for creating new model instances
+
+**Implementation Details**:
+
+### Models Package (`internal/models/models.go`)
+
+1. **Profile Struct**:
+   - Represents a LinkedIn profile we've discovered or interacted with
+   - Fields: ID (UUID), URL, Name, Title, Company, Location, DiscoveredAt, LastVisitedAt, VisitedCount
+   - Helper: `NewProfile(url)` - Creates profile with generated ID and timestamps
+
+2. **ConnectionRequest Struct**:
+   - Represents a connection request we've sent
+   - Fields: ID (UUID), ProfileID, ProfileURL, Status (pending/accepted/rejected/ignored), Note, SentAt, RespondedAt
+   - Helper: `NewConnectionRequest()` - Creates request with generated ID and timestamp
+
+3. **Message Struct**:
+   - Represents a message we've sent to a connection
+   - Fields: ID (UUID), ProfileID, ProfileURL, Content, Status (sent/delivered/read/failed), SentAt, TemplateID
+   - Helper: `NewMessage()` - Creates message with generated ID and timestamp
+
+4. **DailyCounters Struct**:
+   - Tracks daily limits for rate limiting
+   - Fields: Date, ConnectionsSent, MessagesSent, LastConnectionAt, LastMessageAt
+
+5. **HourlyCounters Struct**:
+   - Tracks hourly limits (subset of daily counters)
+   - Fields: Hour, ConnectionsSent, MessagesSent
+
+6. **SessionState Struct**:
+   - Tracks application session metadata (key-value pairs)
+   - Fields: Key, Value, UpdatedAt
+   - Used for storing last run time, etc.
+
+### Storage Package (`internal/storage/storage.go`)
+
+1. **Repository Interface**:
+   - Defines all storage operations as methods
+   - Allows swapping implementations (SQLite, JSON, in-memory for testing)
+   - Methods organized by entity type:
+     - Profile operations (Save, Get, Update, HasVisited, GetAll)
+     - ConnectionRequest operations (Save, Get, Update, Count, GetByStatus)
+     - Message operations (Save, Get, Update, Count, GetAll)
+     - DailyCounters operations (Get, Update, Increment, Reset)
+     - HourlyCounters operations (Get, Update, Increment)
+     - SessionState operations (Get, Set, GetLastRunTime, SetLastRunTime)
+
+2. **SQLite Schema Design** (documented in comments):
+   - **profiles table**: Stores discovered profiles with indexes on URL and discovered_at
+   - **connection_requests table**: Stores sent connection requests with indexes on profile_id, status, sent_at
+   - **messages table**: Stores sent messages with indexes on profile_id, status, sent_at
+   - **daily_counters table**: Tracks daily limits (date as primary key)
+   - **hourly_counters table**: Tracks hourly limits (hour as primary key)
+   - **session_state table**: Key-value store for session metadata
+   - All tables use TEXT for UUIDs (readable), TIMESTAMP for times (ISO8601 format)
+   - Foreign key constraints enabled for data integrity
+   - Denormalized profile_url in connection_requests and messages for quick lookups
+
+3. **SQLiteRepository Struct**:
+   - Placeholder for Phase 8 implementation
+   - Will implement the Repository interface
+
+**Challenges Faced**:
+
+1. **Challenge**: Deciding on data types for timestamps and dates
+   - **Problem**: SQLite doesn't have native DATE/TIMESTAMP types
+   - **Solution**: Use TEXT with ISO8601 format, document expected format in comments. Use Go's `time.Time` in models, convert to/from TEXT in storage layer
+
+2. **Challenge**: Denormalization vs normalization
+   - **Problem**: Should connection_requests and messages store profile_url or only profile_id?
+   - **Solution**: Denormalize profile_url for quick lookups without joins. This is acceptable for a PoC and improves query performance
+
+3. **Challenge**: Hourly vs daily counters separation
+   - **Problem**: Should hourly counters be separate table or embedded in daily?
+   - **Solution**: Separate table for hourly counters allows independent tracking and easier queries. Daily counters track overall daily limits, hourly counters track per-hour limits
+
+**Solutions Implemented**:
+
+1. **UUID Generation**: Used `github.com/google/uuid` for generating unique IDs (already in dependencies)
+
+2. **Helper Constructors**: Created `NewProfile()`, `NewConnectionRequest()`, `NewMessage()` to ensure consistent initialization with generated IDs and timestamps
+
+3. **Interface-Based Design**: Repository interface allows testing with in-memory implementations and future flexibility
+
+4. **Comprehensive Schema Documentation**: Detailed SQLite schema documented in comments with table structures, indexes, and design decisions
+
+5. **Explicit Error Handling**: All repository methods return errors for explicit error handling
+
+**Go Concepts Learned/Applied**:
+
+1. **Struct Definitions**: Defined all data models as structs with appropriate field types
+2. **Pointers**: Used `*models.Profile` etc. for efficiency (avoid copying large structs)
+3. **Interface Design**: Created Repository interface to abstract storage implementation
+4. **Time Types**: Used `time.Time` for all timestamp fields, `*time.Time` for nullable timestamps
+5. **Package Organization**: Clear separation between models (data) and storage (persistence)
+6. **Constructor Pattern**: Helper functions for creating new instances with proper initialization
+
+**Files Created/Modified**:
+- `internal/models/models.go` (~120 lines) - All data model definitions
+- `internal/storage/storage.go` (~150 lines) - Repository interface and schema documentation
+
+**Verification**:
+- ✅ Both packages compile successfully (`go build ./internal/models ./internal/storage`)
+- ✅ No linter errors
+- ✅ All models have appropriate fields for LinkedIn automation use case
+- ✅ Repository interface covers all necessary operations
+- ✅ SQLite schema documented with tables, indexes, and design decisions
+- ✅ Code is explicit and readable (no clever abstractions)
+
+---
+
+## Phase 6: Browser Implementation ✅
+
+**Status**: Complete
+
+**Objectives**:
+- Implement Rod browser wrapper with lifecycle management
+- Implement fingerprint masking for anti-detection
+- Implement cookie persistence for session management
+- Implement page navigation and utilities
+- Provide clean, low-level browser API for stealth layer
+
+**Implementation Details**:
+
+### Browser Lifecycle (`Start()` and `Close()`)
+
+1. **Start() Method**:
+   - Uses Rod launcher API (`launcher.New()`) to create browser launcher
+   - Configures headless mode from config
+   - Launches browser and connects using `rod.New().ControlURL(url).Connect()`
+   - Logs browser startup with configuration
+   - Prevents double-start (returns error if already started)
+
+2. **Close() Method**:
+   - Closes all pages first (clean shutdown)
+   - Closes browser instance
+   - Clears internal state (browser, activePage, pages slice)
+   - Handles already-closed browser gracefully (not an error)
+   - Logs shutdown process
+
+### Page Creation and Management
+
+1. **NewPage() Method**:
+   - Creates new page using `browser.MustPage("")`
+   - Sets viewport size from config (`MustSetViewport()`)
+   - Sets user agent via JavaScript injection (Rod's SetUserAgent requires proto struct)
+   - Applies fingerprint masking before any navigation
+   - Adds page to pages slice
+   - Sets as active page
+   - Returns wrapped Page struct
+
+2. **SetActivePage() Method**:
+   - Validates page is managed by this browser manager
+   - Updates activePage pointer
+   - Logs page switch
+
+3. **GetActivePage() Method**:
+   - Already implemented in Phase 4 (returns error if nil)
+   - No changes needed
+
+### Fingerprint Masking (Critical Anti-Detection)
+
+1. **MaskFingerprint() Method**:
+   - Injects JavaScript using `EvalOnNewDocument()` (runs before page loads)
+   - Removes `navigator.webdriver` flag (key detection point)
+   - Adds `window.chrome` object (Chrome browser indicator)
+   - Sets `navigator.plugins` to realistic array
+   - Sets `navigator.languages` to `['en-US', 'en']`
+   - Ensures `navigator.permissions` exists
+   - Applied automatically in `NewPage()` before navigation
+
+2. **JavaScript Injection**:
+   - Uses `page.EvalOnNewDocument()` for persistent injection
+   - Ensures masking applies to all future navigations
+   - Simple, believable masking (not over-engineered)
+
+### Page Navigation and Utilities
+
+1. **Navigate() Method**:
+   - Uses config timeout or provided timeout (whichever is smaller)
+   - Sets per-operation timeout with `page.Timeout()`
+   - Navigates using `page.Navigate(url)`
+   - Waits for page idle with `page.WaitIdle()`
+   - Updates cached URL and title from page info
+   - Logs navigation events
+
+2. **WaitForElement() Method**:
+   - Sets timeout and waits for element using `page.Element(selector)`
+   - Returns error if element not found within timeout
+   - Logs wait operations
+
+3. **WaitForNavigation() Method**:
+   - Waits for page load using `page.WaitLoad()`
+   - Waits for page idle after navigation
+   - Updates cached URL and title
+   - Logs navigation completion
+
+4. **Eval() Method**:
+   - Executes JavaScript using `page.Eval(js)`
+   - Returns result value
+   - Handles JavaScript execution errors
+   - Logs eval operations (debug level)
+
+5. **Close() Method**:
+   - Closes Rod page using `page.Close()`
+   - Removes page from pages slice
+   - Clears activePage if this was it
+   - Marks page as closed (sets page.page to nil)
+   - Logs page closure
+
+### Cookie Persistence
+
+1. **SaveCookies() Method**:
+   - Gets cookies from active page using `page.Cookies([]string{})`
+   - Creates directory if it doesn't exist (`os.MkdirAll()`)
+   - Serializes cookies to JSON with indentation
+   - Writes to file using `os.WriteFile()`
+   - Logs cookie save with count
+   - Handles missing active page gracefully (warns, not error)
+
+2. **LoadCookies() Method**:
+   - Checks if cookie file exists (not an error if missing - first run)
+   - Reads and deserializes JSON file
+   - Converts `NetworkCookie` to `NetworkCookieParam` (Rod API requirement)
+   - Creates page if needed to apply cookies
+   - Sets cookies using `page.SetCookies()`
+   - Logs cookie load with count
+
+3. **Cookie Type Handling**:
+   - Rod's `Cookies()` returns `[]*proto.NetworkCookie`
+   - Rod's `SetCookies()` expects `[]*proto.NetworkCookieParam`
+   - Conversion between types handled explicitly
+
+**Challenges Faced**:
+
+1. **Challenge**: Rod launcher API usage
+   - **Problem**: Initial confusion between `rod.New()` (client) and `launcher.New()` (launcher)
+   - **Solution**: Used `launcher.New()` for launching, `rod.New().ControlURL(url).Connect()` for connecting
+
+2. **Challenge**: User agent setting
+   - **Problem**: Rod's `MustSetUserAgent()` requires proto struct, not simple string
+   - **Solution**: Used JavaScript injection via `EvalOnNewDocument()` to set user agent
+
+3. **Challenge**: WaitNavigation API
+   - **Problem**: Rod's `WaitNavigation()` API is different than expected
+   - **Solution**: Used `WaitLoad()` and `WaitIdle()` for simpler, more reliable navigation waiting
+
+4. **Challenge**: Cookie type conversion
+   - **Problem**: `Cookies()` returns `NetworkCookie`, but `SetCookies()` expects `NetworkCookieParam`
+   - **Solution**: Explicit conversion between types when loading cookies
+
+5. **Challenge**: Page timeout handling
+   - **Problem**: Rod's timeout API modifies the page object
+   - **Solution**: Reassign `p.page = p.page.Timeout(timeout)` to apply timeout
+
+**Solutions Implemented**:
+
+1. **Clean Browser Lifecycle**: Proper startup and shutdown with state management
+
+2. **Fingerprint Masking**: JavaScript injection before navigation ensures masking applies to all page loads
+
+3. **Cookie Persistence**: JSON serialization with proper type conversion for Rod API
+
+4. **Error Handling**: Explicit error wrapping with context, graceful handling of edge cases
+
+5. **Logging**: Structured logging throughout with appropriate levels (info for operations, debug for details)
+
+6. **Page Management**: Proper tracking of pages and active page with cleanup on close
+
+**Go Concepts Learned/Applied**:
+
+1. **Rod API Usage**: Browser launcher, page creation, navigation, JavaScript execution
+2. **Proto Types**: Used `proto.NetworkCookie` and `proto.NetworkCookieParam` for cookie handling
+3. **File I/O**: `os.MkdirAll()`, `os.WriteFile()`, `os.ReadFile()` for cookie persistence
+4. **JSON Serialization**: `json.MarshalIndent()` and `json.Unmarshal()` for cookie storage
+5. **Error Wrapping**: Used `fmt.Errorf("...: %w", err)` for context preservation
+6. **Slice Management**: Adding/removing pages from slice, finding elements
+7. **Pointer Management**: Managing page pointers and nil checks
+
+**Files Created/Modified**:
+- `internal/browser/browser.go` (~380 lines) - Complete browser implementation
+
+**Verification**:
+- ✅ Package compiles successfully (`go build ./internal/browser`)
+- ✅ No linter errors
+- ✅ All methods implemented (no "not yet implemented" stubs)
+- ✅ Fingerprint masking applied via JavaScript injection
+- ✅ Cookie save/load with proper type conversion
+- ✅ Page navigation with timeout handling
+- ✅ Error handling is explicit and logged
+- ✅ Code is readable and well-commented
+- ✅ Browser-only implementation (no stealth behavior - that's Phase 7)
+
+---
+
+## Phase 7: Stealth Implementation ✅
+
+**Status**: Complete
+
+**Objectives**:
+- Implement human-like mouse movement using Bezier curves
+- Implement randomized timing (delays, thinking time)
+- Implement realistic typing simulation with typos
+- Implement variable speed scrolling with scroll-backs
+- Implement hover with mouse wandering
+- Implement random scroll patterns
+- Provide clean API for all human-like behaviors
+
+**Implementation Details**:
+
+### Browser Helper Method
+
+1. **RodPage() Method** (added to `browser.Page`):
+   - Returns underlying Rod page for stealth layer access
+   - Allows stealth to use Rod's mouse/keyboard APIs
+   - Maintains encapsulation (only stealth layer uses it)
+
+### Timing Methods (Mandatory Technique)
+
+1. **RandomDelay() Method**:
+   - Generates random duration between `min_delay` and `max_delay` from config
+   - Uses `randomDuration()` helper function
+   - Sleeps for calculated duration
+   - Logs delay at debug level
+
+2. **WaitHumanized() Method**:
+   - Generates random "thinking time" between 200ms and 1000ms
+   - Simulates human thinking before actions
+   - Used before clicks and other actions
+   - Logs thinking time at debug level
+
+### Bezier Curve Mouse Movement (Mandatory Technique)
+
+1. **MoveMouse() Method**:
+   - Implements cubic Bezier curve mouse movement
+   - Generates 2 control points (20-40% offset from start/end)
+   - Divides curve into 10-50 steps based on distance
+   - Applies `smoothstep()` easing for speed variation (slow start/end, fast middle)
+   - Adds random jitter (±1-3 pixels) at each step
+   - Implements overshoot: goes 5-10 pixels past target, then corrects back
+   - Uses Rod's `Mouse.MoveTo()` with `proto.NewPoint()`
+   - Logs movement at debug level
+
+2. **Helper Functions**:
+   - `bezierPoint()` - Calculates point on cubic Bezier curve at parameter t
+   - `smoothstep()` - Ease-in-out easing function
+   - `Point` struct - 2D coordinate for Bezier calculations
+
+### Click with Human-Like Movement
+
+1. **Click() Method**:
+   - Gets element using selector
+   - Calculates element center from bounding box (quads)
+   - Adds random offset (±2-5 pixels) for natural click
+   - Moves mouse to element using `MoveMouse()` (Bezier curve)
+   - Calls `WaitHumanized()` for thinking time
+   - Performs click using Rod's `Mouse.Click()`
+   - Small pause after click (50-150ms)
+   - Logs click operation
+
+### Realistic Typing Simulation (Additional Technique)
+
+1. **Type() Method**:
+   - Focuses element before typing
+   - Types each character with random delay (typing_speed_min to typing_speed_max)
+   - 3% chance of typo per character:
+     - Types wrong character (adjacent key)
+     - Waits 100-300ms
+     - Backspaces
+     - Waits 50-150ms
+     - Types correct character
+   - Occasional reading pause every 5-10 characters (200-500ms)
+   - Final pause after typing complete
+   - Uses JavaScript to set `document.activeElement.value` (simpler than Rod Keyboard API)
+   - Logs typing operation (character count, not actual text)
+
+2. **Adjacent Key Mapping**:
+   - Simple map of common adjacent keys (q→w, a→s, etc.)
+   - Used for realistic typo simulation
+
+### Variable Speed Scrolling (Additional Technique)
+
+1. **Scroll() Method**:
+   - Determines scroll direction (up/down) and distance
+   - Calculates steps based on distance (10-30 steps)
+   - Uses variable scroll speed from config range
+   - Applies easing (smoothstep) for acceleration/deceleration
+   - Random speed variation within config range
+   - 20% chance of scroll-back after scrolling 200+ pixels:
+     - Scrolls back 20-50 pixels
+     - Waits 200-500ms (reading)
+     - Continues forward
+   - Uses Rod's `Mouse.Scroll(x, y, deltaY)`
+   - Logs scroll operation
+
+### Hover with Wander (Additional Technique)
+
+1. **Hover() Method**:
+   - Gets element position
+   - Moves mouse near element (not exact center)
+   - Performs 1-3 small random movements (wander):
+     - Random offset (±5-10 pixels)
+     - Moves to wander position
+     - Moves back toward center
+   - Final movement to exact center
+   - Waits 100-300ms (hover time)
+   - Logs hover operation
+
+### Random Scroll (Additional Technique)
+
+1. **RandomScroll() Method**:
+   - Randomly decides action:
+     - 60%: Scroll down (normal)
+     - 20%: Scroll up (back)
+     - 20%: Scroll-back pattern (down → up → down)
+   - Random distance: 50-300 pixels
+   - Uses `scrollDown()` helper with variable speed
+   - Adds natural noise to scrolling behavior
+   - Logs random scroll operation
+
+**Challenges Faced**:
+
+1. **Challenge**: Rod API differences
+   - **Problem**: Rod's `Mouse.MoveTo()` requires `proto.Point`, not separate x/y
+   - **Solution**: Used `proto.NewPoint(x, y)` to create point struct
+
+2. **Challenge**: Element shape API
+   - **Problem**: Rod's `Shape()` returns `DOMGetContentQuadsResult` with quads, not simple x/y/width/height
+   - **Solution**: Parsed quads array to calculate bounding box (min/max x/y)
+
+3. **Challenge**: Keyboard typing API
+   - **Problem**: Rod's `Keyboard.MustType()` expects `input.Key` type, not strings
+   - **Solution**: Used JavaScript to set `document.activeElement.value` directly (simpler and works reliably)
+
+4. **Challenge**: Mouse click API
+   - **Problem**: Rod's `Mouse.Click()` requires button and count parameters
+   - **Solution**: Used `Mouse.Click(proto.InputMouseButtonLeft, 1)` for left click
+
+5. **Challenge**: Scroll API
+   - **Problem**: Rod's `Mouse.Scroll()` signature is `(x, y, deltaY)`, not `(x, y, deltaX, deltaY)`
+   - **Solution**: Used correct signature `Mouse.Scroll(0, 0, deltaY)`
+
+**Solutions Implemented**:
+
+1. **Bezier Curve Implementation**: Cubic Bezier with control points, easing, and overshoot for realistic mouse movement
+
+2. **Simplified Typing**: Used JavaScript to set input values directly, avoiding complex Rod Keyboard API
+
+3. **Element Position Calculation**: Parsed quads array to get bounding box for accurate element center calculation
+
+4. **Helper Functions**: Created reusable helpers for Bezier curves, easing, random generation
+
+5. **Error Handling**: Explicit error returns with context, no automatic retries
+
+6. **Logging**: Debug level for detailed operations, info for major actions
+
+**Go Concepts Learned/Applied**:
+
+1. **Math Calculations**: Bezier curve formulas, easing functions, coordinate calculations
+2. **Random Number Generation**: `rand.Rand` with time-based seed for true randomness
+3. **Time Manipulation**: `time.Sleep()`, `time.Duration` for delays
+4. **Rod API**: Mouse movement, clicking, scrolling, JavaScript execution
+5. **Proto Types**: Used `proto.Point`, `proto.InputMouseButtonLeft` for Rod API
+6. **Error Handling**: Context wrapping for complex operations
+7. **Algorithm Implementation**: Step-by-step execution of Bezier curves, typing simulation
+
+**Files Created/Modified**:
+- `internal/stealth/stealth.go` (~650 lines) - Complete stealth implementation
+- `internal/browser/browser.go` - Added `RodPage()` helper method
+
+**Verification**:
+- ✅ Package compiles successfully (`go build ./internal/stealth`)
+- ✅ No linter errors
+- ✅ All methods implemented (no "not yet implemented" stubs)
+- ✅ Bezier curve mouse movement with overshoot
+- ✅ Randomized timing (delays, thinking time)
+- ✅ Realistic typing with typos and reading pauses
+- ✅ Variable speed scrolling with scroll-backs
+- ✅ Hover with mouse wandering
+- ✅ Random scroll patterns
+- ✅ Error handling is explicit and logged
+- ✅ Code is readable and well-commented
+- ✅ All mandatory and additional anti-detection techniques implemented
+
+---
+
 ## Next Phases (Planned)
-
-### Phase 5: Models and Storage Contracts
-- Define data models (Profile, ConnectionRequest, Message, etc.)
-- Define storage interface/contract
-- Design SQLite schema
-
-### Phase 6: Browser Implementation
-- Implement Rod browser wrapper
-- Implement fingerprint masking
-- Cookie persistence
 
 ### Phase 7: Stealth Implementation
 - Implement human-like mouse movement (Bezier curves)

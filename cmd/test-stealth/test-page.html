@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stealth Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 50px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px;
+            border-radius: 10px;
+        }
+        h1 {
+            text-align: center;
+            font-size: 2.5em;
+            margin-bottom: 30px;
+        }
+        .test-area {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 15px;
+            font-size: 18px;
+            border: 2px solid white;
+            border-radius: 5px;
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+            margin: 10px 0;
+        }
+        button, a {
+            display: inline-block;
+            padding: 15px 30px;
+            margin: 10px;
+            background: white;
+            color: #667eea;
+            text-decoration: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            border: none;
+        }
+        button:hover, a:hover {
+            background: #f0f0f0;
+            transform: scale(1.05);
+            transition: all 0.3s;
+        }
+        .mouse-tracker {
+            position: fixed;
+            width: 20px;
+            height: 20px;
+            background: red;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 10000;
+            display: block;
+            transition: all 0.05s linear;
+            box-shadow: 0 0 10px rgba(255,0,0,0.8);
+        }
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 5px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Stealth Test Page</h1>
+        
+        <div class="test-area">
+            <h2>Mouse Movement Test</h2>
+            <p>Watch the mouse cursor move in curved paths below:</p>
+            <div style="height: 300px; background: rgba(255,255,255,0.1); border: 2px dashed white; border-radius: 5px; position: relative;">
+                <div id="mouse-area" style="width: 100%; height: 100%;"></div>
+            </div>
+        </div>
+
+        <div class="test-area">
+            <h2>Typing Test</h2>
+            <p>Watch text being typed character by character:</p>
+            <input type="text" id="typing-input" placeholder="Text will appear here..." />
+        </div>
+
+        <div class="test-area">
+            <h2>Click & Hover Test</h2>
+            <p>Watch mouse hover and click on these buttons:</p>
+            <button id="test-button-1">Button 1</button>
+            <a href="#" id="test-link-1">Test Link 1</a>
+            <button id="test-button-2">Button 2</button>
+        </div>
+
+        <div class="test-area">
+            <h2>Scroll Test</h2>
+            <p>Watch the page scroll smoothly:</p>
+            <div style="height: 800px; background: rgba(255,255,255,0.1); border-radius: 5px; padding: 20px;">
+                <p style="font-size: 24px; text-align: center; margin-top: 300px;">⬇️ Scroll down to see smooth scrolling ⬇️</p>
+                <p style="font-size: 24px; text-align: center; margin-top: 200px;">⬆️ Scroll up to see reverse scrolling ⬆️</p>
+            </div>
+        </div>
+
+        <div class="status" id="status">
+            <strong>Status:</strong> Waiting for actions...
+        </div>
+    </div>
+
+    <script>
+        // Create visible mouse tracker
+        const tracker = document.createElement('div');
+        tracker.className = 'mouse-tracker';
+        tracker.id = 'mouse-tracker';
+        document.body.appendChild(tracker);
+        
+        // Track mouse movements with visible cursor
+        let mouseMoves = 0;
+        let lastX = 0, lastY = 0;
+        
+        // Listen for real mouse events
+        document.addEventListener('mousemove', function(e) {
+            mouseMoves++;
+            lastX = e.clientX;
+            lastY = e.clientY;
+            // Update tracker position
+            tracker.style.left = (e.clientX - 10) + 'px';
+            tracker.style.top = (e.clientY - 10) + 'px';
+            
+            if (mouseMoves % 5 === 0) {
+                document.getElementById('status').innerHTML = 
+                    '<strong>Status:</strong> Mouse moved ' + mouseMoves + ' times. Position: (' + e.clientX + ', ' + e.clientY + ')';
+            }
+        });
+        
+        // Also expose a function for Rod to call to update position
+        window.updateMousePosition = function(x, y) {
+            tracker.style.left = (x - 10) + 'px';
+            tracker.style.top = (y - 10) + 'px';
+            mouseMoves++;
+            if (mouseMoves % 10 === 0) {
+                document.getElementById('status').innerHTML = 
+                    '<strong>Status:</strong> Mouse moved ' + mouseMoves + ' times. Position: (' + x + ', ' + y + ')';
+            }
+        };
+
+        // Track input changes
+        document.getElementById('typing-input').addEventListener('input', function(e) {
+            document.getElementById('status').innerHTML = 
+                '<strong>Status:</strong> Typing detected! Value: "' + e.target.value + '"';
+        });
+
+        // Track clicks
+        document.querySelectorAll('button, a').forEach(function(el) {
+            el.addEventListener('click', function(e) {
+                e.preventDefault();
+                document.getElementById('status').innerHTML = 
+                    '<strong>Status:</strong> Clicked: ' + e.target.id + ' at ' + new Date().toLocaleTimeString();
+            });
+            el.addEventListener('mouseenter', function(e) {
+                document.getElementById('status').innerHTML = 
+                    '<strong>Status:</strong> Hovered: ' + e.target.id + ' at ' + new Date().toLocaleTimeString();
+            });
+        });
+
+        // Track scrolling
+        let scrollCount = 0;
+        window.addEventListener('scroll', function() {
+            scrollCount++;
+            if (scrollCount % 5 === 0) {
+                document.getElementById('status').innerHTML = 
+                    '<strong>Status:</strong> Scrolled! Position: ' + window.scrollY + 'px';
+            }
+        });
+    </script>
+</body>
+</html>
+
