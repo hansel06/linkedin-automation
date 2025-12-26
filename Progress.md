@@ -842,6 +842,188 @@ This document tracks the implementation phases, challenges faced, and solutions 
 
 ---
 
+## Phase 8: Storage Implementation ✅
+
+**Status**: Complete
+
+**Objectives**:
+- Implement SQLite database persistence
+- Create repository pattern for all storage operations
+- Support state persistence for profiles, requests, messages, and counters
+- Enable rate limiting and duplicate prevention
+
+**Implementation Details**:
+
+1. **SQLite Repository Setup**:
+   - Created `internal/storage/sqlite.go` with full implementation
+   - Uses `modernc.org/sqlite` driver (CGO-free)
+   - Database connection with foreign key constraints enabled
+   - Automatic directory creation for database file
+   - Connection pooling via `database/sql`
+
+2. **Schema Initialization**:
+   - Created 6 tables: `profiles`, `connection_requests`, `messages`, `daily_counters`, `hourly_counters`, `session_state`
+   - Created indexes on frequently queried columns (status, sent_at, profile_id, profile_url, etc.)
+   - Idempotent schema creation (`CREATE TABLE IF NOT EXISTS`)
+   - Foreign key constraints enabled for data integrity
+
+3. **Profile Operations** (CRUD):
+   - `SaveProfile()` - Upsert profile (INSERT OR REPLACE)
+   - `GetProfileByURL()` - Retrieve by LinkedIn URL
+   - `GetProfileByID()` - Retrieve by UUID
+   - `UpdateProfile()` - Update profile metadata
+   - `HasVisitedProfile()` - Check if profile was visited
+   - `GetAllProfiles()` - Get all profiles ordered by discovery date
+
+4. **ConnectionRequest Operations**:
+   - `SaveConnectionRequest()` - Save new connection request
+   - `GetConnectionRequestByID()` - Retrieve by UUID
+   - `GetConnectionRequestsByProfileID()` - Get all requests for a profile
+   - `UpdateConnectionRequest()` - Update status and responded_at
+   - `CountConnectionRequestsToday()` - Count requests sent today
+   - `CountConnectionRequestsInHour()` - Count requests in specific hour
+   - `GetConnectionRequestsByStatus()` - Filter by status (pending, accepted, etc.)
+   - `GetPendingConnectionRequests()` - Get all pending requests
+   - `GetAcceptedConnectionRequests()` - Get all accepted requests
+
+5. **Message Operations**:
+   - `SaveMessage()` - Save new message
+   - `GetMessageByID()` - Retrieve by UUID
+   - `GetMessagesByProfileID()` - Get all messages for a profile
+   - `UpdateMessage()` - Update message status/content
+   - `CountMessagesToday()` - Count messages sent today
+   - `CountMessagesInHour()` - Count messages in specific hour
+   - `GetAllMessages()` - Get all messages ordered by sent date
+
+6. **DailyCounters Operations**:
+   - `GetDailyCounters()` - Get counters for a date (creates if not exists)
+   - `UpdateDailyCounters()` - Upsert daily counters
+   - `IncrementConnectionCount()` - Atomically increment connection count
+   - `IncrementMessageCount()` - Atomically increment message count
+   - `ResetDailyCountersIfNeeded()` - Ensure counters exist for new day
+
+7. **HourlyCounters Operations**:
+   - `GetHourlyCounters()` - Get counters for an hour (creates if not exists)
+   - `UpdateHourlyCounters()` - Upsert hourly counters
+   - `IncrementHourlyConnectionCount()` - Atomically increment hourly connection count
+   - `IncrementHourlyMessageCount()` - Atomically increment hourly message count
+
+8. **SessionState Operations**:
+   - `GetSessionState()` - Get state by key (returns nil if not found)
+   - `SetSessionState()` - Set state (upsert)
+   - `GetLastRunTime()` - Get last run timestamp
+   - `SetLastRunTime()` - Set last run timestamp
+
+**Database Schema**:
+
+1. **profiles** table:
+   - Stores LinkedIn profiles discovered or interacted with
+   - Fields: id (UUID), url (unique), name, title, company, location, discovered_at, last_visited_at, visited_count
+   - Indexes: url, discovered_at
+
+2. **connection_requests** table:
+   - Stores all connection requests sent
+   - Fields: id (UUID), profile_id (FK), profile_url (denormalized), status, note, sent_at, responded_at
+   - Indexes: profile_id, status, sent_at, profile_url
+
+3. **messages** table:
+   - Stores all messages sent to connections
+   - Fields: id (UUID), profile_id (FK), profile_url (denormalized), content, status, sent_at, template_id
+   - Indexes: profile_id, status, sent_at, profile_url
+
+4. **daily_counters** table:
+   - Tracks daily rate limits
+   - Fields: date (PRIMARY KEY), connections_sent, messages_sent, last_connection_at, last_message_at
+
+5. **hourly_counters** table:
+   - Tracks hourly rate limits
+   - Fields: hour (PRIMARY KEY), connections_sent, messages_sent
+
+6. **session_state** table:
+   - Stores application session metadata
+   - Fields: key (PRIMARY KEY), value, updated_at
+
+**Design Decisions**:
+
+1. **TEXT for UUIDs**: Simpler than BLOB, readable in SQLite browser tools
+2. **Denormalized profile_url**: Stored in connection_requests and messages for quick lookups without joins
+3. **RFC3339 timestamps**: ISO8601 format for all time fields (SQLite stores as TEXT)
+4. **Nullable fields**: Used `sql.NullString` for nullable timestamps (responded_at, last_connection_at, etc.)
+5. **Date formatting**: YYYY-MM-DD for dates, YYYY-MM-DD HH:00:00 for hours
+6. **Return nil for not found**: Query methods return `nil, nil` if not found (not an error)
+7. **Upsert pattern**: Used `INSERT OR REPLACE` for simplicity
+
+**Helper Functions**:
+- `formatTime()` - Convert time.Time to RFC3339 string
+- `parseTime()` - Parse RFC3339 string to time.Time
+- `formatDate()` - Convert time.Time to YYYY-MM-DD
+- `formatHour()` - Convert time.Time to YYYY-MM-DD HH:00:00
+- `parseHour()` - Parse hour string to time.Time
+
+**Challenges Faced**:
+
+1. **Challenge**: Nullable timestamp handling
+   - **Problem**: SQLite doesn't have native nullable types, need to handle NULL in queries
+   - **Solution**: Used `sql.NullString` for nullable fields, converted to `*time.Time` in Go structs
+
+2. **Challenge**: Date/hour formatting for SQLite
+   - **Problem**: SQLite stores dates/times as TEXT, need consistent formatting
+   - **Solution**: Created helper functions for formatting and parsing dates/hours consistently
+
+3. **Challenge**: Atomic counter increments
+   - **Problem**: Need to ensure counter increments are atomic (read-modify-write)
+   - **Solution**: Get current counters, increment in Go, then update (or use SQL UPDATE with increment)
+
+4. **Challenge**: Foreign key constraints
+   - **Problem**: Need to ensure data integrity between tables
+   - **Solution**: Enabled `PRAGMA foreign_keys = ON` and created tables in dependency order
+
+**Solutions Implemented**:
+
+1. **Error Wrapping**: All errors wrapped with context using `fmt.Errorf("...: %w", err)`
+2. **Logging**: Debug-level logging for all operations, info for major actions
+3. **Idempotent Operations**: Schema initialization safe to call multiple times
+4. **Transaction Support**: Ready for transactions if needed (not used yet for simplicity)
+5. **Connection Management**: Proper connection pooling via `database/sql`
+
+**Go Concepts Learned/Applied**:
+
+1. **database/sql Package**: Connection management, query execution, result scanning
+2. **SQLite Driver**: `modernc.org/sqlite` CGO-free driver usage
+3. **Nullable Types**: `sql.NullString` for handling NULL values
+4. **Row Scanning**: `rows.Scan()` for reading query results
+5. **Error Handling**: SQL error types, error wrapping
+6. **Time Formatting**: RFC3339, date formatting, time zone handling
+7. **Foreign Keys**: SQLite foreign key constraints
+8. **Indexes**: Performance optimization with indexes
+
+**Files Created/Modified**:
+- `internal/storage/sqlite.go` (~1229 lines) - Complete SQLite repository implementation
+- `internal/storage/storage.go` - Removed placeholder, kept interface definition
+- `cmd/test-storage/main.go` - Comprehensive test program
+
+**Test Program** (`cmd/test-storage/main.go`):
+- Tests all CRUD operations
+- Tests counting operations (daily/hourly)
+- Tests session state management
+- Verifies data persistence
+- Follows same pattern as `test-browser` and `test-stealth`
+
+**Verification**:
+- ✅ Package compiles successfully (`go build ./internal/storage`)
+- ✅ Test program compiles (`go build ./cmd/test-storage`)
+- ✅ No linter errors
+- ✅ All Repository interface methods implemented
+- ✅ Schema initialization is idempotent
+- ✅ Foreign key constraints enabled
+- ✅ Indexes created for performance
+- ✅ Nullable fields handled correctly
+- ✅ Time formatting/parsing works correctly
+- ✅ Error handling is explicit and logged
+- ✅ Code is readable and well-commented
+
+---
+
 ## Next Phases (Planned)
 
 ### Phase 7: Stealth Implementation

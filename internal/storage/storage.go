@@ -134,14 +134,5 @@ type Repository interface {
 }
 
 // SQLiteRepository is the SQLite implementation of Repository.
-// This will be implemented in Phase 8.
-type SQLiteRepository struct {
-	// Implementation details will be added in Phase 8
-	// For now, this is just a placeholder to show the intended structure
-}
-
-// NewSQLiteRepository creates a new SQLite repository instance.
-// This will be implemented in Phase 8.
-func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
-	return nil, nil // Placeholder - will be implemented in Phase 8
-}
+// The actual implementation is in sqlite.go.
+// Use NewSQLiteRepository from sqlite.go to create instances.
